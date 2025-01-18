@@ -1,0 +1,86 @@
+ name: Security Scans (Trivy, Detect-Secrets, and Semgrep)
+ on:
+ workflow_dispatch:
+ push:
+ branches:
+ - master
+ pull_request:
+ branches:
+ - master
+ jobs:
+ security-scans:
+ runs-on: ubuntu-latest
+ steps:
+ # Step 1: Checkout the current repository- name: Checkout Current Repository
+uses: actions/checkout@v4
+ with:
+ fetch-depth: 0
+ # Step 2: Run Trivy Repo Scan-name: Run Trivy Repo Scan
+ uses: aquasecurity/trivy-action@master
+ with:
+ scan-type: 'fs'
+ format: 'json'
+ output: 'trivy_scan_results.json'
+ # Step 3: Install Dependencies for Detect-Secrets and Semgrep-name: Install Dependencies
+ run: |
+ python3-m pip install detect-secrets
+ python3-m pip install semgrep
+ # Step 4: Run Detect-Secrets Scan-name: Run Detect-Secrets Scan
+ run: |
+ detect-secrets scan > detect_secrets_baseline.json
+ yes s | detect-secrets audit detect_secrets_baseline.json | tee
+ detect_secrets_audit_results.txt
+ # Step 5: Run Semgrep Scan with OWASP Top 10 Ruleset-name: Run Semgrep Scan
+ run: |
+ semgrep--config "p/owasp-top-ten"--output semgrep_results.json--json
+ echo "Semgrep scan completed. Results saved to
+ semgrep_results.json."
+ env:
+ SEMGREP_ALLOW_FETCH: 1
+ # Step 6: Format Semgrep Report to Include Severity-name: Format Semgrep Report
+ run: |
+ echo 'import json, csv' > format_semgrep.py
+ echo 'with open("semgrep_results.json") as f:' >> format_semgrep.py
+ echo ' data = json.load(f)["results"]' >> format_semgrep.py
+ echo ' rows = [{' >> format_semgrep.py
+ echo ' "Check": r["check_id"], "Path": r["path"], "Start
+Line": r["start"]["line"], "Message": r["extra"]["message"], "Severity":
+ r["extra"].get("severity", "UNKNOWN")' >> format_semgrep.py
+ echo ' } for r in data]' >> format_semgrep.py
+ echo 'with open("semgrep_results_formatted.csv", "w") as f:' >>
+ format_semgrep.py
+ echo ' writer = csv.DictWriter(f, fieldnames=["Check", "Path",
+ "Start Line", "Message", "Severity"])' >> format_semgrep.py
+ echo ' writer.writeheader()' >> format_semgrep.py
+ echo ' writer.writerows(rows)' >> format_semgrep.py
+ python3 format_semgrep.py
+ echo "Semgrep results formatted and saved to
+ semgrep_results_formatted.csv."
+ # Step 7: Display results in logs-name: Display Trivy Results
+ run: |
+ echo "=== Trivy Results ==="
+ cat trivy_scan_results.json-name: Display Detect-Secrets Results
+ run: |
+ echo "=== Detect-Secrets Results ==="
+ cat detect_secrets_audit_results.txt-name: Display Semgrep Results
+ run: |
+ echo "=== Semgrep Results (Formatted) ==="
+ cat semgrep_results_formatted.csv
+ # Step 8: Upload results as artifacts-name: Upload Trivy Results
+ uses: actions/upload-artifact@v4
+ with:
+ name: trivy-scan-results
+ path: trivy_scan_results.json-name: Upload Detect-Secrets Results
+ uses: actions/upload-artifact@v4
+ with:
+ name: detect-secrets-scan-results
+ path: |
+ detect_secrets_baseline.json
+ detect_secrets_audit_results.txt
+- name: Upload Semgrep Results
+ uses: actions/upload-artifact@v4
+ with:
+ name: semgrep-scan-results
+ path: |
+ semgrep_results.json
+ semgrep_results_formatted.csv
